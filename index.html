@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Blueprint-Style Node Editor Demo</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; overflow: hidden;
+    height: 100%; width: 100%;
+    background: #1e1e1e; /* dark canvas background */
+  }
+  #editor {
+    position: relative;
+    width: 100%; height: 100%;
+    overflow: hidden;
+    cursor: default;
+  }
+  #container {
+    position: absolute;
+    width: 5000px; height: 5000px; /* large area to allow panning */
+    transform-origin: 0 0;
+  }
+  /* Node styles */
+  .node {
+    position: absolute;
+    background: #2e2e2e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #FFF;
+    font-family: sans-serif;
+    font-size: 13px;
+    min-width: 150px;
+    padding: 4px 8px;
+    box-sizing: border-box;
+  }
+  .node .header {
+    font-weight: bold;
+    margin-bottom: 4px;
+    cursor: move;
+  }
+  /* Optional colored headers by type (using data-attributes or classes) */
+  .node-EventBeginPlay .header { background: #6c2e2e; color: #fff; padding: 2px 4px; border-radius: 3px; }
+  .node-PrintString .header   { background: #324865; color: #fff; padding: 2px 4px; border-radius: 3px; }
+  .node-Delay .header         { background: #3d5c3d; color: #fff; padding: 2px 4px; border-radius: 3px; }
+  .node-CustomFunction .header { background: #5a4a6e; color: #fff; padding: 2px 4px; border-radius: 3px; }
+  /* Pin styles */
+  .pin {
+    position: absolute;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    border: 1px solid #222;
+  }
+  .pin.input  { left: -6px; }  /* position to left edge (half out of node) */
+  .pin.output { right: -6px; }
+  .pin.exec   { background: #ccc; }    /* exec pin: white/grey */
+  .pin.string { background: #c26dcc; } /* string pin: magenta-ish */
+  .pin.float  { background: #89cc6d; } /* float pin: green-ish */
+  /* Position pins vertically: for simplicity, align exec pins near top, data pins near their input fields */
+  /* We'll position exec pins at 16px from top (just below header), data pins next to inputs via JS if needed */
+  .pin.exec.input  { top: 16px; }
+  .pin.exec.output { top: 16px; }
+  /* Parameter input fields inside nodes */
+  .param {
+    display: block;
+    margin: 4px 0;
+    font-size: 12px;
+    padding: 2px 4px;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background: #444; color: #fff;
+    width: 90%; /* shrink a bit */
+    box-sizing: border-box;
+  }
+  .param:focus { outline: none; border-color: #77aaff; }
+  /* SVG connections */
+  #connections {
+    position: absolute;
+    top: 0; left: 0;
+    width: 5000px; height: 5000px;
+    pointer-events: none;
+  }
+  .connection-path {
+    fill: none;
+    stroke: #aaa;
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+  /* Context menu */
+  .context-menu {
+    position: absolute;
+    background: #2e2e2e;
+    border: 1px solid #555;
+    border-radius: 4px;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    z-index: 1000;
+    font-family: sans-serif;
+    font-size: 13px;
+    color: #fff;
+  }
+  .context-menu li {
+    padding: 5px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .context-menu li:hover {
+    background: #555;
+  }
+</style>
+</head>
+<body>
+<div id="editor">
+  <div id="container">
+    <svg id="connections"></svg>
+  </div>
+  <!-- Context menu (hidden by default) -->
+  <ul id="menu" class="context-menu" style="display:none;"></ul>
+  <!-- Hidden file input for JSON load -->
+  <input type="file" id="fileInput" accept=".json" style="display:none;" />
+  <!-- Save/Load buttons -->
+  <button id="saveBtn" style="position:absolute; top:10px; right:70px;">Save</button>
+  <button id="loadBtn" style="position:absolute; top:10px; right:10px;">Load</button>
+</div>
+<script>
+(function(){
+  const editor = document.getElementById('editor');
+  const container = document.getElementById('container');
+  const svg = document.getElementById('connections');
+  const menu = document.getElementById('menu');
+  const saveBtn = document.getElementById('saveBtn');
+  const loadBtn = document.getElementById('loadBtn');
+  const fileInput = document.getElementById('fileInput');
+
+  let panX = 0, panY = 0, scale = 1;
+  let isPanning = false;
+  let panStartX, panStartY;
+
+  let nodes = [];        // {id, type, x, y, element, params:{...}}
+  let connections = [];  // {from: nodeId, to: nodeId, element}
+
+  let nodeIdCounter = 1;
+  let draggingNode = null;
+  let dragOffsetX = 0, dragOffsetY = 0;
+  let connectingLink = null;  // temporary SVG path while dragging a new connection
+  let connectSource = null;   // { nodeId, type:"output" } of the pin being dragged
+
+  // Helper: update container transform on pan/zoom
+  function updateTransform() {
+    container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+  }
+
+  // Pan (background drag) handlers
+  editor.addEventListener('mousedown', (e) => {
+    // start panning if clicked on background (editor) and not on a node or menu
+    if (e.target === editor || e.target === container || e.target === svg) {
+      isPanning = true;
+      panStartX = e.clientX;
+      panStartY = e.clientY;
+      editor.style.cursor = 'grabbing';
+    }
+  });
+  editor.addEventListener('mousemove', (e) => {
+    if (isPanning) {
+      const dx = e.clientX - panStartX;
+      const dy = e.clientY - panStartY;
+      panStartX = e.clientX;
+      panStartY = e.clientY;
+      // update pan offsets
+      panX += dx;
+      panY += dy;
+      updateTransform();
+    }
+  });
+  editor.addEventListener('mouseup', (e) => {
+    if (isPanning) {
+      isPanning = false;
+      editor.style.cursor = 'default';
+    }
+  });
+  editor.addEventListener('mouseleave', () => {
+    // cancel panning if mouse leaves the editor area
+    if (isPanning) {
+      isPanning = false;
+      editor.style.cursor = 'default';
+    }
+  });
+
+  // Zoom handler (ctrl + wheel)
+  editor.addEventListener('wheel', (e) => {
+    if (e.ctrlKey) {
+      e.preventDefault();
+      const rect = editor.getBoundingClientRect();
+      // mouse position relative to container
+      const mx = (e.clientX - rect.left);
+      const my = (e.clientY - rect.top);
+      // Determine zoom direction
+      let scaleFactor = (e.deltaY < 0 ? 1.1 : 0.9);
+      // Apply zoom
+      const newScale = Math.max(0.5, Math.min(2.0, scale * scaleFactor));
+      // To zoom around mouse, adjust panX/panY
+      // Compute focal point in container coords before zoom
+      const cx = (mx - panX) / scale;
+      const cy = (my - panY) / scale;
+      // Update scale
+      scale = newScale;
+      // Recompute pan so that (cx, cy) remains at same screen position (mx, my)
+      panX = mx - cx * scale;
+      panY = my - cy * scale;
+      updateTransform();
+    }
+  });
+
+  // Node creation function
+  function createNode(type, x, y, params={}) {
+    const nodeEl = document.createElement('div');
+    nodeEl.classList.add('node');
+    // Add a class without spaces for type (e.g., "node-EventBeginPlay")
+    const typeClass = 'node-' + type.replace(/\s+/g, '');
+    nodeEl.classList.add(typeClass);
+    nodeEl.style.left = x + 'px';
+    nodeEl.style.top = y + 'px';
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'header';
+    header.textContent = type;
+    nodeEl.appendChild(header);
+
+    // Create pins and param fields based on type
+    let hasExecIn = false, hasExecOut = false;
+    if (type === 'Event BeginPlay') {
+      hasExecIn = false;
+      hasExecOut = true;
+    } else if (type === 'Custom Function') {
+      hasExecIn = true;
+      hasExecOut = true;
+    } else if (type === 'Print String') {
+      hasExecIn = true;
+      hasExecOut = true;
+    } else if (type === 'Delay') {
+      hasExecIn = true;
+      hasExecOut = true;
+    }
+    // Exec input pin
+    if (hasExecIn) {
+      const pinIn = document.createElement('div');
+      pinIn.className = 'pin exec input';
+      nodeEl.appendChild(pinIn);
+      // Position exec input pin at top (just below header)
+      pinIn.style.top = header.offsetHeight + 2 + 'px';
+      // Add event for starting connection drag from input? 
+      // (We typically start drag from output, not from input. Blueprint doesn't drag from input).
+      // We'll allow disconnect by alt-click maybe, but not needed in this demo.
+      pinIn.dataset.nodeId = ''; // mark node id after we assign one
+      pinIn.dataset.pinType = 'input';
+    }
+    // Exec output pin
+    if (hasExecOut) {
+      const pinOut = document.createElement('div');
+      pinOut.className = 'pin exec output';
+      nodeEl.appendChild(pinOut);
+      pinOut.style.top = header.offsetHeight + 2 + 'px';
+      pinOut.dataset.nodeId = '';
+      pinOut.dataset.pinType = 'output';
+      // event for dragging connection from output:
+      pinOut.addEventListener('mousedown', beginConnectionDrag);
+    }
+    // Parameter fields
+    if (type === 'Print String') {
+      const inputField = document.createElement('input');
+      inputField.type = 'text';
+      inputField.className = 'param string';
+      inputField.value = params.text !== undefined ? params.text : 'Hello';
+      nodeEl.appendChild(inputField);
+      // For simplicity, no separate pin for string input (assuming user sets text manually)
+      // If desired, could create a pin to allow connecting a string source.
+      inputField.addEventListener('mousedown', (e) => { 
+        // Prevent node dragging when interacting with input
+        e.stopPropagation();
+      });
+      inputField.oninput = () => { nodeData.params.text = inputField.value; };
+    }
+    if (type === 'Delay') {
+      const inputField = document.createElement('input');
+      inputField.type = 'number';
+      inputField.className = 'param float';
+      inputField.value = params.duration !== undefined ? params.duration : 1.0;
+      inputField.step = '0.1';
+      nodeEl.appendChild(inputField);
+      inputField.addEventListener('mousedown', (e) => { e.stopPropagation(); });
+      inputField.oninput = () => { nodeData.params.duration = parseFloat(inputField.value) || 0; };
+    }
+
+    // Append node to container
+    container.appendChild(nodeEl);
+    // Create node data object
+    const nodeData = {
+      id: nodeIdCounter++,
+      type: type,
+      x: x, y: y,
+      element: nodeEl,
+      params: {}  // will fill below if needed
+    };
+    // Initialize params values
+    if (type === 'Print String') {
+      nodeData.params.text = nodeEl.querySelector('input.param.string').value;
+    }
+    if (type === 'Delay') {
+      nodeData.params.duration = parseFloat(nodeEl.querySelector('input.param.float').value) || 0;
+    }
+    // Tag pin elements with nodeId for reference
+    const pins = nodeEl.querySelectorAll('.pin');
+    pins.forEach(pin => { pin.dataset.nodeId = nodeData.id; });
+    // Add node to state list
+    nodes.push(nodeData);
+
+    // Dragging the node: attach events
+    header.addEventListener('mousedown', (e) => {
+      // start node dragging
+      draggingNode = nodeData;
+      // calculate offset of cursor inside node
+      const rect = nodeEl.getBoundingClientRect();
+      // We need offset in container coords, adjust for pan/scale:
+      const containerRect = container.getBoundingClientRect();
+      const containerX = (e.clientX - containerRect.left) / scale;
+      const containerY = (e.clientY - containerRect.top) / scale;
+      dragOffsetX = containerX - nodeData.x;
+      dragOffsetY = containerY - nodeData.y;
+      e.stopPropagation();
+    });
+    return nodeData;
+  }
+
+  // Mouse move on editor for dragging nodes or connection line
+  editor.addEventListener('mousemove', (e) => {
+    // Node dragging
+    if (draggingNode) {
+      const containerRect = container.getBoundingClientRect();
+      const containerX = (e.clientX - containerRect.left) / scale;
+      const containerY = (e.clientY - containerRect.top) / scale;
+      // update node position
+      draggingNode.x = containerX - dragOffsetX;
+      draggingNode.y = containerY - dragOffsetY;
+      draggingNode.element.style.left = draggingNode.x + 'px';
+      draggingNode.element.style.top = draggingNode.y + 'px';
+      // update any connections involving this node
+      updateConnectionsForNode(draggingNode.id);
+    }
+    // Connection dragging (temporary line from source to cursor)
+    if (connectingLink) {
+      // get mouse position relative to container (SVG coordinates)
+      const containerRect = container.getBoundingClientRect();
+      const x2 = (e.clientX - containerRect.left) / scale;
+      const y2 = (e.clientY - containerRect.top) / scale;
+      const {x: x1, y: y1} = connectSource; // starting point coords
+      const dx = x2 - x1;
+      const delta = Math.abs(dx) * 0.5;
+      const pathData = `M${x1},${y1} C${x1+delta},${y1} ${x2-delta},${y2} ${x2},${y2}`;
+      connectingLink.setAttribute('d', pathData);
+    }
+  });
+  editor.addEventListener('mouseup', (e) => {
+    // Stop dragging node
+    if (draggingNode) {
+      draggingNode = null;
+    }
+    // Finish connecting (if releasing on a compatible input pin)
+    if (connectingLink) {
+      // Check drop target
+      const dropTarget = e.target;
+      if (dropTarget && dropTarget.classList.contains('pin') && dropTarget.classList.contains('input')) {
+        const targetNodeId = Number(dropTarget.dataset.nodeId);
+        const sourceNodeId = connectSource.nodeId;
+        if (targetNodeId && sourceNodeId && targetNodeId !== sourceNodeId) {
+          // Ensure not already an incoming connection on this target
+          const existing = connections.find(conn => conn.to === targetNodeId);
+          if (!existing) {
+            // Create a permanent connection
+            addConnection(sourceNodeId, targetNodeId);
+          }
+        }
+      }
+      // Remove temporary line regardless
+      svg.removeChild(connectingLink);
+      connectingLink = null;
+      connectSource = null;
+    }
+  });
+
+  // Begin dragging a new connection from an output pin
+  function beginConnectionDrag(e) {
+    const pinEl = e.target;
+    if (!pinEl.classList.contains('output')) return;
+    const nodeId = Number(pinEl.dataset.nodeId);
+    if (!nodeId) return;
+    // Determine start coordinates of the pin
+    const nodeData = nodes.find(n => n.id === nodeId);
+    if (!nodeData) return;
+    const nodeEl = nodeData.element;
+    const pinRect = pinEl.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const startX = (pinRect.left + pinRect.width/2 - containerRect.left) / scale;
+    const startY = (pinRect.top + pinRect.height/2 - containerRect.top) / scale;
+    // Create temporary SVG path
+    connectingLink = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    connectingLink.classList.add('connection-path');
+    connectingLink.setAttribute('d', `M${startX},${startY} C${startX},${startY} ${startX},${startY} ${startX},${startY}`);
+    svg.appendChild(connectingLink);
+    // Store source info
+    connectSource = { nodeId: nodeId, x: startX, y: startY };
+    e.stopPropagation();
+  }
+
+  // Add a permanent connection between two node IDs
+  function addConnection(fromId, toId) {
+    const sourceNode = nodes.find(n => n.id === fromId);
+    const targetNode = nodes.find(n => n.id === toId);
+    if (!sourceNode || !targetNode) return;
+    // Create new SVG path element
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.classList.add('connection-path');
+    svg.appendChild(path);
+    const connObj = { from: fromId, to: toId, element: path };
+    connections.push(connObj);
+    // Initial draw
+    updateConnectionPath(connObj);
+    return connObj;
+  }
+
+  // Update path for a given connection object
+  function updateConnectionPath(conn) {
+    const sourceNode = nodes.find(n => n.id === conn.from);
+    const targetNode = nodes.find(n => n.id === conn.to);
+    if (!sourceNode || !targetNode) return;
+    // Coordinates of source output pin (right side)
+    const srcEl = sourceNode.element;
+    const tgtEl = targetNode.element;
+    const srcPin = srcEl.querySelector('.pin.output');
+    const tgtPin = tgtEl.querySelector('.pin.input');
+    if (!srcPin || !tgtPin) return;
+    const containerRect = container.getBoundingClientRect();
+    const srcRect = srcPin.getBoundingClientRect();
+    const tgtRect = tgtPin.getBoundingClientRect();
+    const x1 = (srcRect.left + srcRect.width/2 - containerRect.left) / scale;
+    const y1 = (srcRect.top + srcRect.height/2 - containerRect.top) / scale;
+    const x2 = (tgtRect.left + tgtRect.width/2 - containerRect.left) / scale;
+    const y2 = (tgtRect.top + tgtRect.height/2 - containerRect.top) / scale;
+    const dx = x2 - x1;
+    const delta = Math.max(50, Math.abs(dx) * 0.5);
+    const d = `M${x1},${y1} C${x1+delta},${y1} ${x2-delta},${y2} ${x2},${y2}`;
+    conn.element.setAttribute('d', d);
+  }
+
+  // Update all connections or for specific node
+  function updateConnectionsForNode(nodeId) {
+    connections.forEach(conn => {
+      if (conn.from === nodeId || conn.to === nodeId) {
+        updateConnectionPath(conn);
+      }
+    });
+  }
+
+  // Context menu logic
+  const nodeTypes = ["Event BeginPlay", "Print String", "Delay", "Custom Function"];
+  editor.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    // Determine target: node or background
+    let targetNodeEl = e.target.closest('.node');
+    menu.innerHTML = '';
+    if (targetNodeEl) {
+      // Right-click on a node: show delete menu
+      const deleteItem = document.createElement('li');
+      deleteItem.textContent = "Delete Node";
+      deleteItem.addEventListener('click', () => {
+        const nodeId = nodes.find(n => n.element === targetNodeEl).id;
+        deleteNode(nodeId);
+        hideMenu();
+      });
+      menu.appendChild(deleteItem);
+    } else {
+      // Right-click on background: show "add node" options
+      nodeTypes.forEach(type => {
+        const item = document.createElement('li');
+        item.textContent = "Add " + type;
+        item.addEventListener('click', () => {
+          // Calculate container coordinates for click point
+          const rect = container.getBoundingClientRect();
+          const x = (e.clientX - rect.left) / scale;
+          const y = (e.clientY - rect.top) / scale;
+          createNode(type, x, y);
+          hideMenu();
+        });
+        menu.appendChild(item);
+      });
+    }
+    // Show menu at cursor
+    menu.style.display = 'block';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+  });
+  // Hide context menu on any left click or escape
+  document.addEventListener('mousedown', (e) => {
+    if (menu.style.display === 'block') {
+      // if clicking outside menu (and not the contextmenu event itself)
+      if (!e.target.closest('.context-menu')) {
+        hideMenu();
+      }
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      hideMenu();
+    }
+  });
+  function hideMenu() {
+    menu.style.display = 'none';
+  }
+
+  // Delete a node and its connections
+  function deleteNode(nodeId) {
+    const nodeIndex = nodes.findIndex(n => n.id === nodeId);
+    if (nodeIndex === -1) return;
+    // Remove from DOM
+    const nodeData = nodes[nodeIndex];
+    container.removeChild(nodeData.element);
+    // Remove from nodes list
+    nodes.splice(nodeIndex, 1);
+    // Remove connections
+    connections = connections.filter(conn => {
+      if (conn.from === nodeId || conn.to === nodeId) {
+        // remove SVG path
+        svg.removeChild(conn.element);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Save/Load
+  saveBtn.addEventListener('click', () => {
+    const graph = {
+      nodes: nodes.map(n => ({
+        id: n.id,
+        type: n.type,
+        x: n.x, y: n.y,
+        params: n.params
+      })),
+      connections: connections.map(c => ({ from: c.from, to: c.to }))
+    };
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(graph, null, 2));
+    const dlAnchor = document.createElement('a');
+    dlAnchor.setAttribute('href', dataStr);
+    dlAnchor.setAttribute('download', 'graph.json');
+    dlAnchor.click();
+  });
+  loadBtn.addEventListener('click', () => {
+    fileInput.click();
+  });
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const graph = JSON.parse(event.target.result);
+        loadGraph(graph);
+      } catch (err) {
+        alert("Invalid JSON file");
+      }
+    };
+    reader.readAsText(file);
+    // reset file input
+    fileInput.value = "";
+  });
+  function loadGraph(graph) {
+    // Clear existing nodes and connections
+    nodes.slice().forEach(n => deleteNode(n.id));
+    // Reset id counter
+    nodeIdCounter = 1;
+    // Create nodes from JSON
+    if (graph.nodes) {
+      graph.nodes.forEach(n => {
+        // Use stored id if needed, or generate new (we can just regenerate IDs in this demo)
+        const newNode = createNode(n.type, n.x, n.y, n.params || {});
+        // If we want to preserve IDs exactly as in file (might not be needed), we could:
+        newNode.id = n.id;
+        nodeIdCounter = Math.max(nodeIdCounter, n.id + 1);
+      });
+    }
+    // Create connections
+    if (graph.connections) {
+      graph.connections.forEach(conn => {
+        addConnection(conn.from, conn.to);
+      });
+    }
+  }
+
+  // Initialize with a default node (optional)
+  createNode("Event BeginPlay", 50, 50);
+})();
+</script>
+</body>
+</html>
