@@ -19,6 +19,11 @@
     position: absolute;
     width: 5000px; height: 5000px; /* large area to allow panning */
     transform-origin: 0 0;
+    background-color: #1e1e1e;
+    background-image:
+      linear-gradient(#2a2a2a 1px, transparent 1px),
+      linear-gradient(90deg, #2a2a2a 1px, transparent 1px);
+    background-size: 20px 20px;
   }
   /* Node styles */
   .node {
@@ -37,6 +42,7 @@
     font-weight: bold;
     margin-bottom: 4px;
     cursor: move;
+    user-select: none;
   }
   /* Optional colored headers by type (using data-attributes or classes) */
   .node-EventBeginPlay .header { background: #6c2e2e; color: #fff; padding: 2px 4px; border-radius: 3px; }
@@ -121,6 +127,7 @@
   <!-- Save/Load buttons -->
   <button id="saveBtn" style="position:absolute; top:10px; right:70px;">Save</button>
   <button id="loadBtn" style="position:absolute; top:10px; right:10px;">Load</button>
+  <div id="zoomLevel" style="position:absolute; top:10px; right:150px; color:#fff; font-family:sans-serif;"></div>
 </div>
 <script>
 (function(){
@@ -131,8 +138,11 @@
   const saveBtn = document.getElementById('saveBtn');
   const loadBtn = document.getElementById('loadBtn');
   const fileInput = document.getElementById('fileInput');
+  const zoomLevelEl = document.getElementById('zoomLevel');
 
   let panX = 0, panY = 0, scale = 1;
+  const minScale = 0.1;
+  const maxScale = 5;
   let isPanning = false;
   let panStartX, panStartY;
 
@@ -145,9 +155,17 @@
   let connectingLink = null;  // temporary SVG path while dragging a new connection
   let connectSource = null;   // { nodeId, type:"output" } of the pin being dragged
 
+  function updateZoomIndicator() {
+    if (zoomLevelEl) {
+      zoomLevelEl.textContent = Math.round(scale * 100) + '%';
+    }
+  }
+  updateZoomIndicator();
+
   // Helper: update container transform on pan/zoom
   function updateTransform() {
     container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    updateZoomIndicator();
   }
 
   // Pan (background drag) handlers
@@ -186,29 +204,21 @@
     }
   });
 
-  // Zoom handler (ctrl + wheel)
+  // Zoom handler (mouse wheel)
   editor.addEventListener('wheel', (e) => {
-    if (e.ctrlKey) {
-      e.preventDefault();
-      const rect = editor.getBoundingClientRect();
-      // mouse position relative to container
-      const mx = (e.clientX - rect.left);
-      const my = (e.clientY - rect.top);
-      // Determine zoom direction
-      let scaleFactor = (e.deltaY < 0 ? 1.1 : 0.9);
-      // Apply zoom
-      const newScale = Math.max(0.5, Math.min(2.0, scale * scaleFactor));
-      // To zoom around mouse, adjust panX/panY
-      // Compute focal point in container coords before zoom
-      const cx = (mx - panX) / scale;
-      const cy = (my - panY) / scale;
-      // Update scale
-      scale = newScale;
-      // Recompute pan so that (cx, cy) remains at same screen position (mx, my)
-      panX = mx - cx * scale;
-      panY = my - cy * scale;
-      updateTransform();
-    }
+    e.preventDefault();
+    const rect = editor.getBoundingClientRect();
+    const mx = (e.clientX - rect.left);
+    const my = (e.clientY - rect.top);
+    const scaleFactor = (e.deltaY < 0 ? 1.1 : 0.9);
+    const newScale = Math.max(minScale, Math.min(maxScale, scale * scaleFactor));
+    const cx = (mx - panX) / scale;
+    const cy = (my - panY) / scale;
+    scale = newScale;
+    panX = mx - cx * scale;
+    panY = my - cy * scale;
+    updateTransform();
+    updateZoomIndicator();
   });
 
   // Node creation function
@@ -323,6 +333,8 @@
 
     // Dragging the node: attach events
     header.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (e.detail !== 1) return; // ignore double click
       // start node dragging
       draggingNode = nodeData;
       // calculate offset of cursor inside node
@@ -334,6 +346,14 @@
       dragOffsetX = containerX - nodeData.x;
       dragOffsetY = containerY - nodeData.y;
       e.stopPropagation();
+    });
+    header.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      const newTitle = prompt('Enter new node name', header.textContent);
+      if (newTitle && newTitle.trim() !== '') {
+        header.textContent = newTitle.trim();
+        nodeData.type = newTitle.trim();
+      }
     });
     return nodeData;
   }
