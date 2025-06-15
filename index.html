@@ -242,30 +242,31 @@
       hasExecIn = true;
       hasExecOut = true;
     }
-    // Exec input pin
-    if (hasExecIn) {
-      const pinIn = document.createElement('div');
-      pinIn.className = 'pin exec input';
-      nodeEl.appendChild(pinIn);
-      // Position exec input pin at top (just below header)
-      pinIn.style.top = header.offsetHeight + 2 + 'px';
-      // Add event for starting connection drag from input? 
-      // (We typically start drag from output, not from input. Blueprint doesn't drag from input).
-      // We'll allow disconnect by alt-click maybe, but not needed in this demo.
-      pinIn.dataset.nodeId = ''; // mark node id after we assign one
-      pinIn.dataset.pinType = 'input';
-    }
-    // Exec output pin
-    if (hasExecOut) {
-      const pinOut = document.createElement('div');
-      pinOut.className = 'pin exec output';
-      nodeEl.appendChild(pinOut);
-      pinOut.style.top = header.offsetHeight + 2 + 'px';
-      pinOut.dataset.nodeId = '';
-      pinOut.dataset.pinType = 'output';
-      // event for dragging connection from output:
-      pinOut.addEventListener('mousedown', beginConnectionDrag);
-    }
+      // Exec input pin
+      let pinIn = null;
+      if (hasExecIn) {
+        pinIn = document.createElement('div');
+        pinIn.className = 'pin exec input';
+        nodeEl.appendChild(pinIn);
+        // We'll set its vertical position after the element is in the DOM
+        // Add event for starting connection drag from input?
+        // (We typically start drag from output, not from input. Blueprint doesn't drag from input).
+        // We'll allow disconnect by alt-click maybe, but not needed in this demo.
+        pinIn.dataset.nodeId = ''; // mark node id after we assign one
+        pinIn.dataset.pinType = 'input';
+      }
+      // Exec output pin
+      let pinOut = null;
+      if (hasExecOut) {
+        pinOut = document.createElement('div');
+        pinOut.className = 'pin exec output';
+        nodeEl.appendChild(pinOut);
+        // Position will be set after appending to the DOM
+        pinOut.dataset.nodeId = '';
+        pinOut.dataset.pinType = 'output';
+        // event for dragging connection from output:
+        pinOut.addEventListener('mousedown', beginConnectionDrag);
+      }
     // Parameter fields
     if (type === 'Print String') {
       const inputField = document.createElement('input');
@@ -292,8 +293,13 @@
       inputField.oninput = () => { nodeData.params.duration = parseFloat(inputField.value) || 0; };
     }
 
-    // Append node to container
-    container.appendChild(nodeEl);
+      // Append node to container so dimensions are available
+      container.appendChild(nodeEl);
+
+      // After insertion we can correctly position exec pins just below the header
+      const headerHeight = header.offsetHeight;
+      if (pinIn) pinIn.style.top = headerHeight + 2 + 'px';
+      if (pinOut) pinOut.style.top = headerHeight + 2 + 'px';
     // Create node data object
     const nodeData = {
       id: nodeIdCounter++,
