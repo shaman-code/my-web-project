@@ -17,8 +17,14 @@
   }
   #container {
     position: absolute;
-    width: 5000px; height: 5000px; /* large area to allow panning */
+    width: 10000px; height: 10000px; /* large area to allow panning */
     transform-origin: 0 0;
+  }
+
+  #grid {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
     background-color: #1e1e1e;
     background-image:
       linear-gradient(#2a2a2a 1px, transparent 1px),
@@ -82,7 +88,7 @@
   #connections {
     position: absolute;
     top: 0; left: 0;
-    width: 5000px; height: 5000px;
+    width: 10000px; height: 10000px;
     pointer-events: none;
   }
   .connection-path {
@@ -117,6 +123,7 @@
 </head>
 <body>
 <div id="editor">
+  <div id="grid"></div>
   <div id="container">
     <svg id="connections"></svg>
   </div>
@@ -133,6 +140,7 @@
 (function(){
   const editor = document.getElementById('editor');
   const container = document.getElementById('container');
+  const grid = document.getElementById('grid');
   const svg = document.getElementById('connections');
   const menu = document.getElementById('menu');
   const saveBtn = document.getElementById('saveBtn');
@@ -165,6 +173,8 @@
   // Helper: update container transform on pan/zoom
   function updateTransform() {
     container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    grid.style.backgroundSize = `${20 * scale}px ${20 * scale}px`;
+    grid.style.backgroundPosition = `${panX}px ${panY}px`;
     updateZoomIndicator();
   }
 
@@ -624,6 +634,7 @@
 
   // Initialize with a default node (optional)
   createNode("Event BeginPlay", 50, 50);
+  updateTransform();
 })();
 </script>
 </body>
