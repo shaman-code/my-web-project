@@ -33,10 +33,10 @@
       linear-gradient(#444 1px, transparent 1px),
       linear-gradient(90deg, #444 1px, transparent 1px);
     background-size:
-      20px 20px,
-      20px 20px,
-      100px 100px,
-      100px 100px;
+      16px 16px,
+      16px 16px,
+      128px 128px,
+      128px 128px;
     background-position:
       0 0,
       0 0,
@@ -161,8 +161,8 @@
   const zoomLevelEl = document.getElementById('zoomLevel');
 
   let panX = 0, panY = 0, scale = 1;
-  const minScale = 0.1;
-  const maxScale = 5;
+  const zoomSteps = [0.125, 0.16, 0.2, 0.25, 0.33, 0.5, 0.66, 1, 1.5, 2, 3, 4, 5];
+  let zoomIndex = zoomSteps.indexOf(1);
   let isPanning = false;
   let panStartX, panStartY;
 
@@ -183,42 +183,30 @@
   updateZoomIndicator();
 
   function updateGrid() {
-    const minor = 20 * scale;
-    const major = 100 * scale;
+    const minor = 16 * scale;
+    const major = 128 * scale;
     const offset = `${panX}px ${panY}px`;
-    const images = [];
-    const sizes = [];
-    const positions = [];
 
-    if (scale > 2) {
-      const fine = 10 * scale;
-      images.push(
-        'linear-gradient(#242424 1px, transparent 1px)',
-        'linear-gradient(90deg, #242424 1px, transparent 1px)'
-      );
-      sizes.push(`${fine}px ${fine}px`, `${fine}px ${fine}px`);
-      positions.push(offset, offset);
-    }
-
-    if (scale > 0.3) {
-      images.push(
-        'linear-gradient(#2a2a2a 1px, transparent 1px)',
-        'linear-gradient(90deg, #2a2a2a 1px, transparent 1px)'
-      );
-      sizes.push(`${minor}px ${minor}px`, `${minor}px ${minor}px`);
-      positions.push(offset, offset);
-    }
-
-    images.push(
+    grid.style.backgroundImage = [
+      'linear-gradient(#2a2a2a 1px, transparent 1px)',
+      'linear-gradient(90deg, #2a2a2a 1px, transparent 1px)',
       'linear-gradient(#444 1px, transparent 1px)',
       'linear-gradient(90deg, #444 1px, transparent 1px)'
-    );
-    sizes.push(`${major}px ${major}px`, `${major}px ${major}px`);
-    positions.push(offset, offset);
+    ].join(',');
 
-    grid.style.backgroundImage = images.join(',');
-    grid.style.backgroundSize = sizes.join(',');
-    grid.style.backgroundPosition = positions.join(',');
+    grid.style.backgroundSize = [
+      `${minor}px ${minor}px`,
+      `${minor}px ${minor}px`,
+      `${major}px ${major}px`,
+      `${major}px ${major}px`
+    ].join(',');
+
+    grid.style.backgroundPosition = [
+      offset,
+      offset,
+      offset,
+      offset
+    ].join(',');
   }
 
   // Helper: update container transform on pan/zoom
@@ -270,8 +258,12 @@
     const rect = editor.getBoundingClientRect();
     const mx = (e.clientX - rect.left);
     const my = (e.clientY - rect.top);
-    const scaleFactor = (e.deltaY < 0 ? 1.1 : 0.9);
-    const newScale = Math.max(minScale, Math.min(maxScale, scale * scaleFactor));
+    if (e.deltaY < 0 && zoomIndex < zoomSteps.length - 1) {
+      zoomIndex++;
+    } else if (e.deltaY > 0 && zoomIndex > 0) {
+      zoomIndex--;
+    }
+    const newScale = zoomSteps[zoomIndex];
     const cx = (mx - panX) / scale;
     const cy = (my - panY) / scale;
     scale = newScale;
