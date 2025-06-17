@@ -26,17 +26,18 @@
     top: 0; left: 0; right: 0; bottom: 0;
     pointer-events: none;
     background-color: #1e1e1e;
-    /* background layers will be updated dynamically via JS */
+    /* Two background layers: minor (16px) and major (128px) */
     background-image:
       linear-gradient(#2a2a2a 1px, transparent 1px),
       linear-gradient(90deg, #2a2a2a 1px, transparent 1px),
       linear-gradient(#444 1px, transparent 1px),
       linear-gradient(90deg, #444 1px, transparent 1px);
+    /* initial sizes will be updated in JS */
     background-size:
-      20px 20px,
-      20px 20px,
-      100px 100px,
-      100px 100px;
+      16px 16px,
+      16px 16px,
+      128px 128px,
+      128px 128px;
     background-position:
       0 0,
       0 0,
@@ -183,42 +184,15 @@
   updateZoomIndicator();
 
   function updateGrid() {
-    const minor = 20 * scale;
-    const major = 100 * scale;
+    const minor = 16 * scale;
+    const major = 128 * scale;
     const offset = `${panX}px ${panY}px`;
-    const images = [];
-    const sizes = [];
-    const positions = [];
 
-    if (scale > 2) {
-      const fine = 10 * scale;
-      images.push(
-        'linear-gradient(#242424 1px, transparent 1px)',
-        'linear-gradient(90deg, #242424 1px, transparent 1px)'
-      );
-      sizes.push(`${fine}px ${fine}px`, `${fine}px ${fine}px`);
-      positions.push(offset, offset);
-    }
-
-    if (scale > 0.3) {
-      images.push(
-        'linear-gradient(#2a2a2a 1px, transparent 1px)',
-        'linear-gradient(90deg, #2a2a2a 1px, transparent 1px)'
-      );
-      sizes.push(`${minor}px ${minor}px`, `${minor}px ${minor}px`);
-      positions.push(offset, offset);
-    }
-
-    images.push(
-      'linear-gradient(#444 1px, transparent 1px)',
-      'linear-gradient(90deg, #444 1px, transparent 1px)'
-    );
-    sizes.push(`${major}px ${major}px`, `${major}px ${major}px`);
-    positions.push(offset, offset);
-
-    grid.style.backgroundImage = images.join(',');
-    grid.style.backgroundSize = sizes.join(',');
-    grid.style.backgroundPosition = positions.join(',');
+    grid.style.backgroundSize =
+      `${minor}px ${minor}px, ${minor}px ${minor}px, ` +
+      `${major}px ${major}px, ${major}px ${major}px`;
+    grid.style.backgroundPosition =
+      `${offset}, ${offset}, ${offset}, ${offset}`;
   }
 
   // Helper: update container transform on pan/zoom
